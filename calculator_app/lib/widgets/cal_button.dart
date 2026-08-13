@@ -7,24 +7,32 @@ import '../constant/colors.dart';
 class CalculateButton extends StatelessWidget {
   const CalculateButton({
     super.key,
+    required this.width,
+    required this.height,
   });
+
+  final double width;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () =>
-          Provider.of<CalculatorProvider>(context, listen: false).setValue("="),
-      child: Container(
-        height: 160,
-        width: 70,
-        decoration: BoxDecoration(
-            color: AppColors.secondaryColor,
-            borderRadius: BorderRadius.circular(40)),
-        child: const Center(
-          child: Text(
-            "=",
-            style: TextStyle(
-              fontSize: 32,
+    return Material(
+      color: AppColors.secondaryColor,
+      borderRadius: BorderRadius.circular(width / 2),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => Provider.of<CalculatorProvider>(context, listen: false)
+            .setValue("="),
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: Center(
+            child: Text(
+              "=",
+              style: TextStyle(
+                fontSize: width * 0.44,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
