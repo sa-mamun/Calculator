@@ -19,7 +19,9 @@ android {
     // defaults to 34, and Google Play requires API 36 (Android 16) to keep
     // shipping updates after Aug 31, 2026.
     compileSdk = 36
-    ndkVersion = flutter.ndkVersion
+    // Pinned instead of flutter.ndkVersion: Flutter 3.24 defaults to 23.1.7779620,
+    // but dynamic_color and shared_preferences_android both require 27.0.12077973.
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8

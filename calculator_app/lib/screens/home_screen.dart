@@ -1,127 +1,237 @@
 import 'dart:math' as math;
 
-import 'package:calculator_app/constant/colors.dart';
-import 'package:calculator_app/provider/cal_provider.dart';
-import 'package:calculator_app/screens/widgets_data.dart';
-import 'package:calculator_app/widgets/textfield.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import '../widgets/button.dart';
-import '../widgets/cal_button.dart';
+import '../controllers/calculator_controller.dart';
+import '../controllers/history_controller.dart';
+import '../controllers/settings_controller.dart';
+import '../models/calc_key.dart';
+import '../widgets/display_panel.dart';
+import '../widgets/history_sheet.dart';
+import '../widgets/keypad.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
-  static const _hPad = 25.0;
-  static const _vPad = 30.0;
-  static const _rowGap = 20.0;
-  static const _minColGap = 8.0;
-  static const _minButtonSize = 40.0;
-  static const _maxButtonSize = 72.0;
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final FocusNode _keyboardFocus = FocusNode();
+  bool _showScientific = false;
+
+  @override
+  void dispose() {
+    _keyboardFocus.dispose();
+    super.dispose();
+  }
+
+  void _onKey(String key) {
+    final calculator = context.read<CalculatorController>();
+    final entry = calculator.press(key);
+    if (entry != null) context.read<HistoryController>().add(entry);
+  }
+
+  Future<void> _openHistory() async {
+    final history = context.read<HistoryController>();
+    final picked = await HistorySheet.show(context, history);
+    if (picked != null && mounted) {
+      context.read<CalculatorController>().insertValue(picked);
+    }
+  }
+
+  /// Lets the app be driven from a hardware keyboard, which matters on the
+  /// desktop and web targets this project also builds for.
+  void _onHardwareKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return;
+
+    final logical = event.logicalKey;
+    if (logical == LogicalKeyboardKey.backspace) return _onKey(kBackspace);
+    if (logical == LogicalKeyboardKey.escape ||
+        logical == LogicalKeyboardKey.delete) {
+      return _onKey(kAllClear);
+    }
+    if (logical == LogicalKeyboardKey.enter ||
+        logical == LogicalKeyboardKey.numpadEnter) {
+      return _onKey(kEquals);
+    }
+
+    const mapping = <String, String>{
+      '*': '×',
+      'x': '×',
+      '/': '÷',
+      '-': '−',
+      '+': '+',
+      '^': '^',
+      '=': kEquals,
+      '.': '.',
+      '%': '%',
+      '(': '(',
+      ')': ')',
+    };
+
+    final char = event.character;
+    if (char == null || char.isEmpty) return;
+
+    final mapped = mapping[char.toLowerCase()];
+    if (mapped != null) return _onKey(mapped);
+    if (RegExp(r'^[0-9]$').hasMatch(char)) _onKey(char);
+  }
 
   @override
   Widget build(BuildContext context) {
-    const padding = EdgeInsets.symmetric(horizontal: _hPad, vertical: _vPad);
-    const decoration = BoxDecoration(
-        color: AppColors.primaryColor,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)));
+    final settings = context.watch<SettingsController>();
+    final calculator = context.watch<CalculatorController>();
+    final scheme = Theme.of(context).colorScheme;
+
+    // The controller does not listen to settings itself, so the screen keeps
+    // the two in step.
+    calculator.angleUnit = settings.angleUnit;
 
     return Scaffold(
-      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text("Calculator App"),
-        backgroundColor: Colors.black,
+        title: const Text('Calculator'),
+        actions: [
+          IconButton(
+            onPressed: () => setState(() => _showScientific = !_showScientific),
+            tooltip:
+                _showScientific ? 'Hide scientific keys' : 'Scientific keys',
+            isSelected: _showScientific,
+            icon: const Icon(Icons.functions_rounded),
+            selectedIcon: Icon(Icons.functions_rounded, color: scheme.primary),
+          ),
+          IconButton(
+            onPressed: _openHistory,
+            tooltip: 'History',
+            icon: const Icon(Icons.history_rounded),
+          ),
+          IconButton(
+            onPressed: settings.cycleThemeMode,
+            tooltip: _themeTooltip(settings.themeMode),
+            icon: Icon(_themeIcon(settings.themeMode)),
+          ),
+        ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            CustomTextField(
-              controller: context.read<CalculatorProvider>().compController,
-            ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return SingleChildScrollView(
-                    // Pins the keypad to the bottom when it fits, and lets it
-                    // scroll instead of overflowing when it does not.
-                    reverse: true,
-                    child: Container(
-                      width: double.infinity,
-                      padding: padding,
-                      decoration: decoration,
-                      child: _Keypad(size: _buttonSize(constraints)),
+        child: KeyboardListener(
+          focusNode: _keyboardFocus,
+          autofocus: true,
+          onKeyEvent: _onHardwareKey,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final display = Align(
+                alignment: Alignment.bottomRight,
+                child: DisplayPanel(
+                  controller: calculator,
+                  angleUnit: settings.angleUnit,
+                  onToggleAngleUnit: settings.toggleAngleUnit,
+                ),
+              );
+              final keypad = _KeypadSurface(
+                color: scheme.surfaceContainerLow,
+                // Side by side, the rounded corner belongs on the left edge
+                // rather than along the top.
+                wide: constraints.maxWidth > constraints.maxHeight,
+                child: Keypad(
+                  showScientific: _showScientific,
+                  haptics: settings.hapticsEnabled,
+                  onKey: _onKey,
+                ),
+              );
+
+              // A short, wide window cannot stack a display above five rows of
+              // keys, so the two sit beside each other instead.
+              if (constraints.maxWidth > constraints.maxHeight) {
+                return Row(
+                  children: [
+                    Expanded(flex: 4, child: display),
+                    Expanded(flex: 6, child: keypad),
+                  ],
+                );
+              }
+
+              // The pad gets the height it asks for -- rows at their
+              // width-limited size, spread as loosely as it will go -- and the
+              // display keeps the rest. Handing the pad the leftover instead
+              // would just move the dead band inside the grid, above the top
+              // row.
+              //
+              // What the display holds back is capped at a fraction of the
+              // window as well as its own preferred height, so a short one
+              // leaves the pad room to scroll in rather than a negative box.
+              final keypadHeight = math.min(
+                Keypad.preferredHeight(
+                      constraints.maxWidth - _KeypadSurface.horizontalPadding,
+                      _showScientific,
+                    ) +
+                    _KeypadSurface.verticalPadding,
+                constraints.maxHeight -
+                    math.min(
+                      DisplayPanel.preferredHeight,
+                      constraints.maxHeight * 0.32,
                     ),
-                  );
-                },
-              ),
-            ),
-          ],
+              );
+
+              return Column(
+                children: [
+                  Expanded(child: display),
+                  SizedBox(height: keypadHeight, child: keypad),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
   }
 
-  /// Scales the keys so the four rows always fit the space that is left,
-  /// instead of overflowing on shorter or narrower devices.
-  double _buttonSize(BoxConstraints constraints) {
-    final byWidth =
-        (constraints.maxWidth - 2 * _hPad - 3 * _minColGap) / 4;
-    // Four rows, the last one being two stacked rows: 5 keys + 4 gaps tall.
-    final byHeight =
-        (constraints.maxHeight - 2 * _vPad - 4 * _rowGap) / 5;
-    return math
-        .min(_maxButtonSize, math.min(byWidth, byHeight))
-        .clamp(_minButtonSize, _maxButtonSize);
-  }
+  static IconData _themeIcon(ThemeMode mode) => switch (mode) {
+        ThemeMode.system => Icons.brightness_auto_rounded,
+        ThemeMode.light => Icons.light_mode_rounded,
+        ThemeMode.dark => Icons.dark_mode_rounded,
+      };
+
+  static String _themeTooltip(ThemeMode mode) => switch (mode) {
+        ThemeMode.system => 'Theme: system',
+        ThemeMode.light => 'Theme: light',
+        ThemeMode.dark => 'Theme: dark',
+      };
 }
 
-class _Keypad extends StatelessWidget {
-  const _Keypad({required this.size});
+/// The raised panel the keypad sits on.
+class _KeypadSurface extends StatelessWidget {
+  const _KeypadSurface({
+    required this.color,
+    required this.wide,
+    required this.child,
+  });
 
-  final double size;
+  /// Left and right padding inside the panel, and the top and bottom padding
+  /// the portrait layout budgets for.
+  static const double horizontalPadding = 32;
+  static const double verticalPadding = 36;
 
-  Widget _row(int start, int count) => Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: List.generate(count, (index) {
-          final key = buttonList[start + index];
-          return Button1(
-            label: key.label,
-            textColor: key.textColor,
-            size: size,
-          );
-        }),
-      );
+  final Color color;
+  final bool wide;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    const gap = HomeScreen._rowGap;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _row(0, 4),
-        const SizedBox(height: gap),
-        _row(4, 4),
-        const SizedBox(height: gap),
-        _row(8, 4),
-        const SizedBox(height: gap),
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                children: [
-                  _row(12, 3),
-                  const SizedBox(height: gap),
-                  _row(15, 3),
-                ],
-              ),
-            ),
-            const SizedBox(width: gap),
-            CalculateButton(width: size, height: size * 2 + gap),
-          ],
-        ),
-      ],
+    return Container(
+      width: double.infinity,
+      padding: wide
+          ? const EdgeInsets.fromLTRB(16, 12, 16, 12)
+          : const EdgeInsets.fromLTRB(16, 20, 16, 16),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: wide
+            ? const BorderRadius.horizontal(left: Radius.circular(28))
+            : const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: child,
     );
   }
 }
